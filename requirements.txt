@@ -1,0 +1,14 @@
+# SAP GUI Automation Requirements
+# Core Windows COM automation library
+pywin32>=306
+
+# Optional: Enhanced GUI styling (if you want modern themes)
+ttkthemes>=3.2.2
+
+# Optional: For better CSV handling with pandas (if needed)
+# pandas>=2.0.0
+
+# Optional: For advanced logging
+# loguru>=0.7.0
+
+# Note: tkinter comes built-in with Python, no installation needed
