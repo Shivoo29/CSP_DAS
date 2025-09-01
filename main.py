@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import win32com.client
+import pythoncom
 import time
 import threading
 import csv
@@ -237,77 +238,128 @@ class SAPBulkProcessor:
         self.processing_thread.start()
     
     def process_parts(self):
-        delay = float(self.delay_var.get())
-        max_retries = int(self.retry_var.get())
+        # Initialize COM for this thread
+        pythoncom.CoInitialize()
         
-        for i, part_number in enumerate(self.part_numbers):
-            if not self.is_processing:
-                break
+        # Create SAP connection within this thread
+        thread_sap_gui_auto = None
+        thread_application = None
+        thread_connection = None
+        thread_session = None
+        
+        try:
+            # Connect to SAP GUI in this thread
+            self.root.after(0, self.log, "Establishing SAP connection in worker thread...")
             
-            self.current_part_index = i
-            retry_count = 0
-            success = False
+            thread_sap_gui_auto = win32com.client.GetObject("SAPGUI")
+            thread_application = thread_sap_gui_auto.GetScriptingEngine
             
-            while retry_count <= max_retries and not success and self.is_processing:
-                try:
-                    self.root.after(0, self.update_progress, i, part_number)
-                    self.root.after(0, self.log, f"Processing part {i+1}/{self.total_parts}: {part_number}")
-                    
-                    # Navigate to transaction
-                    self.session.findById("wnd[0]/tbar[0]/okcd").text = "zr423"
-                    self.session.findById("wnd[0]").sendVKey(0)  # Enter key
-                    
-                    # Enter part number
-                    self.session.findById("wnd[0]/usr/ctxtS_MATNR-LOW").text = part_number
-                    self.session.findById("wnd[0]/usr/ctxtS_MATNR-LOW").setFocus()
-                    
-                    # Execute
-                    self.session.findById("wnd[0]/tbar[1]/btn[8]").press()
-                    time.sleep(1)  # Wait for results
-                    
-                    # Check for dialogs and handle them
+            if thread_application.Children.Count == 0:
+                raise Exception("No SAP GUI connections found.")
+            
+            thread_connection = thread_application.Children(0)
+            
+            if thread_connection.Children.Count == 0:
+                raise Exception("No active SAP sessions found.")
+            
+            thread_session = thread_connection.Children(0)
+            
+            # Test the connection
+            thread_session.findById("wnd[0]").maximize
+            self.root.after(0, self.log, "SAP connection established in worker thread")
+            
+            delay = float(self.delay_var.get())
+            max_retries = int(self.retry_var.get())
+            
+            for i, part_number in enumerate(self.part_numbers):
+                if not self.is_processing:
+                    break
+                
+                self.current_part_index = i
+                retry_count = 0
+                success = False
+                
+                while retry_count <= max_retries and not success and self.is_processing:
                     try:
-                        # Try to find and press the generate button (btn[45])
-                        self.session.findById("wnd[0]/tbar[1]/btn[45]").press()
-                        time.sleep(0.5)
+                        self.root.after(0, self.update_progress, i, part_number)
+                        self.root.after(0, self.log, f"Processing part {i+1}/{self.total_parts}: {part_number}")
                         
-                        # Select radio button and press generate (btn[0])
-                        self.session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[3,0]").select()
-                        self.session.findById("wnd[1]/tbar[0]/btn[0]").press()  # Generate button
-                        time.sleep(0.5)
+                        # Navigate to transaction
+                        thread_session.findById("wnd[0]/tbar[0]/okcd").text = "zr423"
+                        thread_session.findById("wnd[0]").sendVKey(0)  # Enter key
+                        time.sleep(0.5)  # Wait for transaction to load
                         
-                        # Press expand button (btn[7])
-                        self.session.findById("wnd[1]/tbar[0]/btn[7]").press()  # Expand button
-                        time.sleep(0.5)
+                        # Enter part number
+                        thread_session.findById("wnd[0]/usr/ctxtS_MATNR-LOW").text = part_number
+                        thread_session.findById("wnd[0]/usr/ctxtS_MATNR-LOW").setFocus()
                         
-                    except Exception as dialog_error:
-                        # If dialog handling fails, just continue
-                        self.root.after(0, self.log, f"Dialog handling skipped for {part_number}: {str(dialog_error)}")
-                    
-                    # Go back to main screen
-                    self.session.findById("wnd[0]/tbar[0]/btn[3]").press()
-                    
-                    success = True
-                    self.processed_parts.append(part_number)
-                    self.root.after(0, self.log, f"✓ Successfully processed: {part_number}")
-                    
-                except Exception as e:
-                    retry_count += 1
-                    error_msg = f"Error processing {part_number} (attempt {retry_count}): {str(e)}"
-                    self.root.after(0, self.log, error_msg)
-                    
-                    if retry_count > max_retries:
-                        self.failed_parts.append((part_number, str(e)))
-                        self.root.after(0, self.log, f"✗ Failed to process: {part_number} after {max_retries} retries")
-                    else:
-                        time.sleep(2)  # Wait before retry
+                        # Execute
+                        thread_session.findById("wnd[0]/tbar[1]/btn[8]").press()
+                        time.sleep(1.5)  # Wait for results to load
+                        
+                        # Check for dialogs and handle them
+                        try:
+                            # Try to find and press the generate button (btn[45])
+                            thread_session.findById("wnd[0]/tbar[1]/btn[45]").press()
+                            time.sleep(0.8)
+                            
+                            # Select radio button and press generate (btn[0])
+                            thread_session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[3,0]").select()
+                            thread_session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[3,0]").setFocus()
+                            time.sleep(0.3)
+                            
+                            # Press generate button (btn[0])
+                            thread_session.findById("wnd[1]/tbar[0]/btn[0]").press()
+                            time.sleep(0.8)
+                            
+                            # Press expand button (btn[7])
+                            thread_session.findById("wnd[1]/tbar[0]/btn[7]").press()
+                            time.sleep(0.5)
+                            
+                        except Exception as dialog_error:
+                            # If dialog handling fails, just continue
+                            self.root.after(0, self.log, f"Dialog handling skipped for {part_number}: {str(dialog_error)}")
+                        
+                        # Go back to main screen
+                        try:
+                            thread_session.findById("wnd[0]/tbar[0]/btn[3]").press()
+                            time.sleep(0.5)
+                        except:
+                            # Alternative way to go back
+                            try:
+                                thread_session.findById("wnd[0]").sendVKey(12)  # F12 key
+                                time.sleep(0.5)
+                            except:
+                                pass
+                        
+                        success = True
+                        self.processed_parts.append(part_number)
+                        self.root.after(0, self.log, f"✓ Successfully processed: {part_number}")
+                        
+                    except Exception as e:
+                        retry_count += 1
+                        error_msg = f"Error processing {part_number} (attempt {retry_count}): {str(e)}"
+                        self.root.after(0, self.log, error_msg)
+                        
+                        if retry_count > max_retries:
+                            self.failed_parts.append((part_number, str(e)))
+                            self.root.after(0, self.log, f"✗ Failed to process: {part_number} after {max_retries} retries")
+                        else:
+                            time.sleep(2)  # Wait before retry
+                
+                # Update statistics
+                self.root.after(0, self.update_stats)
+                
+                # Delay between parts (if not the last part)
+                if i < len(self.part_numbers) - 1 and self.is_processing:
+                    time.sleep(delay)
             
-            # Update statistics
-            self.root.after(0, self.update_stats)
+        except Exception as thread_connection_error:
+            self.root.after(0, self.log, f"Failed to establish SAP connection in worker thread: {str(thread_connection_error)}")
             
-            # Delay between parts (if not the last part)
-            if i < len(self.part_numbers) - 1 and self.is_processing:
-                time.sleep(delay)
+        finally:
+            # Clean up COM
+            pythoncom.CoUninitialize()
         
         # Processing completed
         self.root.after(0, self.processing_completed)
@@ -369,6 +421,8 @@ class SAPBulkProcessor:
         self.part_numbers = remaining_parts
         self.total_parts = len(remaining_parts)
         self.current_part_index = 0
+        
+        # The process_parts method will handle COM initialization internally
         self.process_parts()
     
     def export_results(self):
